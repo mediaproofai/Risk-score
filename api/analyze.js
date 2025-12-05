@@ -1,59 +1,47 @@
 export default async function handler(req, res) {
-  // CORS Headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST');
 
-  const { forensic, internet, metadata } = req.body;
+    const { forensic, audio, internet } = req.body;
+    let probability = 0;
+    let evidence = [];
 
-  let riskScore = 0;
-  let summaryParts = [];
-
-  // --- 1. REAL AI DETECTION LOGIC ---
-  if (forensic && forensic.details && forensic.details.aiArtifacts) {
-    const aiData = forensic.details.aiArtifacts;
-    
-    // If AI confidence is high (e.g. 0.9), we add 90 points to risk.
-    if (aiData.confidence > 0.1) {
-        const impact = Math.round(aiData.confidence * 100);
-        riskScore += impact;
-        
-        if (aiData.confidence > 0.5) {
-            summaryParts.push(`CRITICAL: AI Generation signatures detected (${impact}% match).`);
-        } else {
-            summaryParts.push(`WARNING: Minor synthetic artifacts detected (${impact}%).`);
-        }
+    // 1. VISUAL EVIDENCE
+    if (forensic?.verdict?.aiProbability > 0.5) {
+        const score = forensic.verdict.aiProbability;
+        probability = Math.max(probability, score); // Take the highest confidence
+        evidence.push(`Visual AI Artifacts detected (${(score*100).toFixed(0)}% confidence)`);
     }
-  }
+    
+    if (forensic?.technical_analysis?.noise_verdict === "SUSPICIOUSLY_SMOOTH") {
+        probability += 0.1; // Add weight
+        evidence.push("Unnatural noise entropy detected");
+    }
 
-  // --- 2. OSINT / INTERNET LOGIC ---
-  if (internet && internet.footprintAnalysis) {
-      if (internet.footprintAnalysis.sources?.stockParams) {
-          riskScore += 50;
-          summaryParts.push("Image matched in known Stock Photo databases.");
-      }
-  }
+    // 2. AUDIO EVIDENCE
+    if (audio?.voice_integrity?.cloning_probability > 0.8) {
+        probability = Math.max(probability, 0.95); // Almost certainly fake
+        evidence.push("Synthetic Voice Signature (High Frequency Cutoff)");
+    }
 
-  // --- 3. FINALIZE SCORE ---
-  // Cap at 100
-  riskScore = Math.min(riskScore, 100);
+    // 3. CONTEXTUAL EVIDENCE (OSINT)
+    if (internet?.footprintAnalysis?.sources?.stockParams) {
+        probability = Math.max(probability, 0.9); // It's a stock photo, misleading context
+        evidence.push("Identical match found in Stock Database");
+    } else if (internet?.footprintAnalysis?.totalMatches === 0 && probability > 0.4) {
+        probability += 0.1; // Suspiciously unique for a "news" photo
+        evidence.push("Zero Internet Footprint (Fresh Generation)");
+    }
 
-  // If Score is High (Bad), text should be scary.
-  // If Score is Low (Good), text should be calm.
-  let executiveSummary = "Media appears authentic.";
-  if (riskScore > 80) executiveSummary = "CRITICAL THREAT: High probability of AI generation.";
-  else if (riskScore > 40) executiveSummary = "SUSPICIOUS: Verification recommended.";
-  
-  if (summaryParts.length > 0) {
-      executiveSummary += " " + summaryParts.join(" ");
-  }
+    // Cap at 1.0 (100%)
+    probability = Math.min(probability, 1.0);
+    const score = Math.round(probability * 100);
 
-  return res.status(200).json({
-    service: 'risk-score-service',
-    riskScore: riskScore, 
-    riskLevel: riskScore > 70 ? 'CRITICAL' : 'SAFE',
-    executiveSummary: executiveSummary,
-    timestamp: new Date().toISOString()
-  });
+    return res.status(200).json({
+        service: "risk-engine-v4",
+        riskScore: score,
+        riskLevel: score > 80 ? "CRITICAL" : score > 50 ? "SUSPICIOUS" : "VERIFIED",
+        executiveSummary: evidence.length > 0 ? evidence.join(". ") : "No anomalies detected. Media appears authentic.",
+        breakdown: evidence
+    });
 }
