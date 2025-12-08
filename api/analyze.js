@@ -1,167 +1,92 @@
 export default async function handler(req, res) {
-    // 1. STANDARD CORS & SECURITY HEADERS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    
     if (req.method === 'OPTIONS') return res.status(200).end();
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    try {
-        const { forensic, audio, video, internet, metadata } = req.body;
+    const { forensic, audio, video, internet, metadata } = req.body;
 
-        let riskScore = 0;
-        let evidence = [];
-        let trustFactors = [];
-        let killSwitchActivated = false;
+    let riskScore = 0;
+    let evidence = [];
+    let positiveFactors = 0;
 
-        // --- PHASE 1: KILL SIGNALS (Immediate Condemnation) ---
-        // These factors are 99.9% indicators of deception.
-
-        // 1.1 Known AI Metadata Signature (Local Check)
-        if (forensic?.details?.aiArtifacts?.localFlags?.length > 0) {
-            riskScore = 100;
-            killSwitchActivated = true;
-            evidence.push(`CRITICAL: Known AI Generator Signature found in file header (${forensic.details.aiArtifacts.localFlags[0]}).`);
-        }
-
-        // 1.2 Stock Photo Match (Deception)
-        if (!killSwitchActivated && internet?.footprintAnalysis?.sources?.stockParams) {
-            riskScore = 95;
-            killSwitchActivated = true;
-            evidence.push("CRITICAL: Image identified in commercial Stock Photo database (Context Mismatch).");
-        }
-
-        // 1.3 Audio Frequency Cutoff (16kHz = Old TTS/Deepfake)
-        if (!killSwitchActivated && audio?.signal_analysis?.frequency_cutoff?.includes("Hard Limit")) {
-            riskScore = 90;
-            killSwitchActivated = true;
-            evidence.push("CRITICAL: Audio spectrum shows unnatural 16kHz cutoff (Typical of TTS/Cloning).");
-        }
-
-        // --- PHASE 2: WEIGHTED PROBABILISTIC SCORING ---
-        // If no Kill Signal, we weigh the evidence.
-
-        if (!killSwitchActivated) {
+    // --- 1. FORENSIC ANALYSIS (Visual) ---
+    if (forensic?.details) {
+        const ai = forensic.details.aiArtifacts || {};
+        
+        // A. Direct AI Detection
+        if (ai.confidence > 0.1) {
+            // Scale confidence: 50% confidence = 80% Risk
+            let severity = ai.confidence * 100;
+            if (ai.confidence > 0.5) severity += 30; 
+            riskScore = Math.max(riskScore, severity);
             
-            // 2.1 VISUAL FORENSICS (The Council of Models)
-            if (forensic?.details?.aiArtifacts) {
-                const ai = forensic.details.aiArtifacts;
-                
-                // If the "Council" (Ensemble) returns high confidence
-                if (ai.confidence > 0.5) {
-                    const severity = Math.round(ai.confidence * 100);
-                    riskScore += severity; // Add the raw AI score
-                    
-                    if (severity > 80) evidence.push(`High-Fidelity AI visual artifacts detected (${severity}% confidence).`);
-                    else evidence.push(`Subtle synthetic textures detected (${severity}% confidence).`);
-                }
-
-                // Check Noise/Entropy (Smoothness)
-                if (forensic.details.noiseAnalysis?.inconsistent) {
-                    riskScore += 20;
-                    evidence.push("Unnatural pixel noise entropy (Surface is too smooth).");
-                }
-            }
-
-            // 2.2 VIDEO TEMPORAL FORENSICS
-            if (video?.verdict) {
-                // Frame-by-Frame AI Detection
-                if (video.verdict.is_deepfake) {
-                    riskScore = Math.max(riskScore, video.verdict.confidence * 100);
-                    evidence.push(`Deepfake faces detected across multiple keyframes.`);
-                }
-
-                // Sync/Compression Anomalies
-                if (video.temporal_analysis?.sync_anomaly === "HIGH") {
-                    riskScore += 15;
-                    evidence.push("Audio/Video bitrate mismatch (Potential cheap deepfake or re-encoding).");
-                }
-                
-                if (video.temporal_analysis?.frame_integrity === "CRITICAL_MANIPULATION") {
-                    riskScore = Math.max(riskScore, 85);
-                    evidence.push("Temporal inconsistency: Adjacent frames do not follow physics.");
-                }
-            }
-
-            // 2.3 AUDIO VOICE INTEGRITY
-            if (audio?.voice_integrity) {
-                if (audio.voice_integrity.cloning_probability > 0.6) {
-                    riskScore += Math.round(audio.voice_integrity.cloning_probability * 100);
-                    evidence.push("Voice biometrics match known cloning patterns.");
-                }
-                if (audio.signal_analysis?.micro_tremors === "ABSENT") {
-                    riskScore += 15;
-                    evidence.push("Lacks human vocal micro-tremors (Robotic stability).");
-                }
-            }
-
-            // 2.4 OSINT (Timeline Analysis)
-            if (internet?.footprintAnalysis) {
-                // Zero Footprint Risk (Fresh AI often has 0 matches)
-                if (internet.footprintAnalysis.totalMatches === 0 && riskScore > 40) {
-                    riskScore += 10; 
-                    evidence.push("Zero internet history corroborates synthetic origin.");
-                }
-                // Viral Repost Risk
-                else if (internet.footprintAnalysis.isViral) {
-                    // Viral doesn't mean fake, but it increases the chance of "Cheapfakes" (Context stripping)
-                    if (riskScore < 20) {
-                        riskScore += 5; 
-                        evidence.push("High-velocity viral content (Verify original context).");
-                    }
-                }
-            }
-
-            // 2.5 METADATA INTEGRITY
-            if (metadata?.provenance?.isEdited) {
-                riskScore += 10;
-                evidence.push(`Software signature trace: ${metadata.deviceFingerprint?.software || "Unknown Editor"}.`);
-            }
+            if (ai.confidence > 0.5) evidence.push(`CRITICAL: Visual AI artifacts detected (${(ai.confidence*100).toFixed(0)}% match).`);
+            else evidence.push(`WARNING: Subtle synthetic textures found.`);
         }
 
-        // --- PHASE 3: NORMALIZATION & VERDICT ---
-
-        // Cap Risk at 100
-        riskScore = Math.min(Math.round(riskScore), 100);
-        
-        // Define Risk Level
-        let riskLevel = "VERIFIED";
-        if (riskScore > 85) riskLevel = "CRITICAL";
-        else if (riskScore > 60) riskLevel = "HIGH";
-        else if (riskScore > 30) riskLevel = "SUSPICIOUS";
-
-        // Generate Executive Summary
-        let summary = "Analysis complete. Media appears consistent with organic capture.";
-        
-        if (evidence.length > 0) {
-            // Prioritize the top 2 evidence points for the summary
-            summary = `${riskLevel} THREAT: ${evidence.slice(0, 2).join(" ")}`;
-            if (evidence.length > 2) summary += ` (+${evidence.length - 2} other flags).`;
+        // B. Noise Entropy (The "Smoothness" Check)
+        // AI images are often "too smooth". If entropy is low and no camera data exists -> FAKE.
+        if (forensic.details.noiseAnalysis?.inconsistent) {
+            riskScore += 30;
+            evidence.push("Unnatural pixel noise entropy (Surface is mathematically too smooth).");
         }
-
-        // Add Trust Factors if score is low (Psychological reassurance)
-        if (riskScore < 20) {
-            if (internet?.footprintAnalysis?.totalMatches > 0) trustFactors.push("Corroborated by external internet sources.");
-            if (metadata?.fileIntegrity?.isExtensionSpoofed === false) trustFactors.push("File structure integrity is valid.");
-            if (audio && audio.signal_analysis?.micro_tremors === "PRESENT") trustFactors.push("Natural biological vocal tremors detected.");
-        }
-
-        return res.status(200).json({
-            service: "risk-engine-god-mode",
-            riskScore: riskScore,
-            riskLevel: riskLevel,
-            executiveSummary: summary,
-            breakdown: evidence,
-            trustFactors: trustFactors,
-            timestamp: new Date().toISOString()
-        });
-
-    } catch (error) {
-        return res.status(500).json({ 
-            error: "Risk Assessment Failed", 
-            details: error.message,
-            fallback_score: 50 // Fail-safe: Assume suspicious if system crashes
-        });
     }
+
+    // --- 2. METADATA "NEGATIVE PROOF" ---
+    // If a file has NO camera data and NO software signature, it is highly suspicious.
+    if (metadata) {
+        const hasCamera = metadata.deviceFingerprint?.make !== "Unknown";
+        const hasSoftware = metadata.deviceFingerprint?.software !== "Unknown";
+        
+        if (hasCamera) {
+            positiveFactors += 1; // Trust factor
+        } else if (riskScore === 0) {
+            // No camera data found? Suspicious.
+            riskScore += 35;
+            evidence.push("Missing origin data (No Camera/Device Metadata found).");
+        }
+
+        if (hasSoftware) {
+            riskScore += 10;
+            evidence.push(`Modified by software: ${metadata.deviceFingerprint.software}`);
+        }
+    }
+
+    // --- 3. VIDEO & AUDIO ---
+    if (video?.verdict?.is_deepfake) {
+        riskScore = Math.max(riskScore, 95);
+        evidence.push("CRITICAL: Deepfake face swap detected in video frames.");
+    }
+
+    if (audio?.voice_integrity?.cloning_probability > 0.5) {
+        riskScore = Math.max(riskScore, 90);
+        evidence.push("CRITICAL: AI Voice Cloning signature detected.");
+    }
+
+    // --- 4. THE PARANOID FALLBACK ---
+    // If we found NOTHING (Score 0) but also have NO positive proof (No Camera Data, No History)
+    // We default to "Unverified/Risky" instead of "Safe".
+    if (riskScore === 0 && positiveFactors === 0 && internet?.footprintAnalysis?.totalMatches === 0) {
+        riskScore = 45;
+        evidence.push("Unverified Source: No digital footprint or camera metadata found.");
+    }
+
+    // Cap Score
+    riskScore = Math.min(Math.round(riskScore), 100);
+
+    // Summary Generation
+    let riskLevel = "VERIFIED";
+    if (riskScore > 80) riskLevel = "CRITICAL";
+    else if (riskScore > 40) riskLevel = "SUSPICIOUS";
+    else if (riskScore > 20) riskLevel = "UNCERTAIN";
+
+    return res.status(200).json({
+        service: "risk-engine-v7-paranoid",
+        riskScore: riskScore,
+        riskLevel: riskLevel,
+        executiveSummary: evidence.length > 0 ? evidence[0] : "Media appears consistent with organic capture.",
+        breakdown: evidence,
+        timestamp: new Date().toISOString()
+    });
 }
