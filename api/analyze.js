@@ -4,85 +4,50 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { forensic, audio, video, internet, metadata } = req.body;
-
+    const { forensic, internet } = req.body;
     let riskScore = 0;
     let evidence = [];
-    let positiveFactors = 0;
 
-    // --- 1. FORENSIC ANALYSIS (Visual) ---
-    if (forensic?.details) {
-        const ai = forensic.details.aiArtifacts || {};
+    // 1. FORENSIC EVIDENCE
+    if (forensic?.details?.aiArtifacts) {
+        const ai = forensic.details.aiArtifacts;
         
-        // A. Direct AI Detection
+        // If AI Probability is high
         if (ai.confidence > 0.1) {
-            // Scale confidence: 50% confidence = 80% Risk
-            let severity = ai.confidence * 100;
-            if (ai.confidence > 0.5) severity += 30; 
-            riskScore = Math.max(riskScore, severity);
+            let impact = ai.confidence * 100;
             
-            if (ai.confidence > 0.5) evidence.push(`CRITICAL: Visual AI artifacts detected (${(ai.confidence*100).toFixed(0)}% match).`);
-            else evidence.push(`WARNING: Subtle synthetic textures found.`);
+            // Boost the score if it's the Heuristic Fallback
+            if (ai.modelUsed.includes("Heuristic")) {
+                impact = Math.max(impact, 65); 
+                evidence.push("Suspicious Origin: Image lacks camera metadata common in real photos.");
+            } else {
+                evidence.push(`Visual AI Artifacts detected (${Math.round(impact)}% confidence).`);
+            }
+            
+            riskScore = Math.max(riskScore, impact);
         }
-
-        // B. Noise Entropy (The "Smoothness" Check)
-        // AI images are often "too smooth". If entropy is low and no camera data exists -> FAKE.
-        if (forensic.details.noiseAnalysis?.inconsistent) {
-            riskScore += 30;
-            evidence.push("Unnatural pixel noise entropy (Surface is mathematically too smooth).");
-        }
+    } else {
+        // If forensic failed completely
+        riskScore = 50;
+        evidence.push("Forensic Analysis unavailable (Potential obfuscation).");
     }
 
-    // --- 2. METADATA "NEGATIVE PROOF" ---
-    // If a file has NO camera data and NO software signature, it is highly suspicious.
-    if (metadata) {
-        const hasCamera = metadata.deviceFingerprint?.make !== "Unknown";
-        const hasSoftware = metadata.deviceFingerprint?.software !== "Unknown";
-        
-        if (hasCamera) {
-            positiveFactors += 1; // Trust factor
-        } else if (riskScore === 0) {
-            // No camera data found? Suspicious.
-            riskScore += 35;
-            evidence.push("Missing origin data (No Camera/Device Metadata found).");
-        }
-
-        if (hasSoftware) {
-            riskScore += 10;
-            evidence.push(`Modified by software: ${metadata.deviceFingerprint.software}`);
-        }
+    // 2. INTERNET EVIDENCE
+    if (internet?.footprintAnalysis?.sources?.stockParams) {
+        riskScore = 95;
+        evidence.push("CRITICAL: Image found in Stock Photo Database.");
     }
 
-    // --- 3. VIDEO & AUDIO ---
-    if (video?.verdict?.is_deepfake) {
-        riskScore = Math.max(riskScore, 95);
-        evidence.push("CRITICAL: Deepfake face swap detected in video frames.");
-    }
-
-    if (audio?.voice_integrity?.cloning_probability > 0.5) {
-        riskScore = Math.max(riskScore, 90);
-        evidence.push("CRITICAL: AI Voice Cloning signature detected.");
-    }
-
-    // --- 4. THE PARANOID FALLBACK ---
-    // If we found NOTHING (Score 0) but also have NO positive proof (No Camera Data, No History)
-    // We default to "Unverified/Risky" instead of "Safe".
-    if (riskScore === 0 && positiveFactors === 0 && internet?.footprintAnalysis?.totalMatches === 0) {
-        riskScore = 45;
-        evidence.push("Unverified Source: No digital footprint or camera metadata found.");
-    }
-
-    // Cap Score
+    // 3. FINAL VERDICT
     riskScore = Math.min(Math.round(riskScore), 100);
-
-    // Summary Generation
+    
     let riskLevel = "VERIFIED";
     if (riskScore > 80) riskLevel = "CRITICAL";
-    else if (riskScore > 40) riskLevel = "SUSPICIOUS";
-    else if (riskScore > 20) riskLevel = "UNCERTAIN";
+    else if (riskScore > 50) riskLevel = "HIGH";
+    else if (riskScore > 30) riskLevel = "SUSPICIOUS";
 
     return res.status(200).json({
-        service: "risk-engine-v7-paranoid",
+        service: "risk-engine-zero-tolerance",
         riskScore: riskScore,
         riskLevel: riskLevel,
         executiveSummary: evidence.length > 0 ? evidence[0] : "Media appears consistent with organic capture.",
