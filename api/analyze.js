@@ -8,46 +8,46 @@ export default async function handler(req, res) {
     let riskScore = 0;
     let evidence = [];
 
-    // 1. FORENSIC EVIDENCE
-    if (forensic?.details?.aiArtifacts) {
+    if (forensic?.details) {
         const ai = forensic.details.aiArtifacts;
-        
-        // If AI Probability is high
+        const noise = forensic.details.noiseAnalysis;
+
+        // 1. PRIMARY: AI Probability (Combined)
         if (ai.confidence > 0.1) {
             let impact = ai.confidence * 100;
-            
-            // Boost the score if it's the Heuristic Fallback
-            if (ai.modelUsed.includes("Heuristic")) {
-                impact = Math.max(impact, 65); 
-                evidence.push("Suspicious Origin: Image lacks camera metadata common in real photos.");
-            } else {
-                evidence.push(`Visual AI Artifacts detected (${Math.round(impact)}% confidence).`);
-            }
-            
             riskScore = Math.max(riskScore, impact);
+
+            if (ai.method === "PIXEL_ENTROPY_MATH") {
+                evidence.push(`CRITICAL: Pixel variance (${noise.pixel_variance.toFixed(1)}) matches Diffusion Model signatures.`);
+            } else if (ai.method === "MISSING_ORIGIN_DATA") {
+                evidence.push("Suspicious: Image lacks camera data and contains no organic sensor noise.");
+            } else {
+                evidence.push(`AI Generation detected by Neural Ensemble (${Math.round(impact)}% match).`);
+            }
         }
-    } else {
-        // If forensic failed completely
-        riskScore = 50;
-        evidence.push("Forensic Analysis unavailable (Potential obfuscation).");
+
+        // 2. SECONDARY: Mathematical Confirmation
+        if (noise?.verdict === "ARTIFICIAL_SMOOTHNESS" && riskScore < 80) {
+            riskScore = Math.max(riskScore, 85);
+            evidence.push("Abnormal surface smoothness detected (Lacks camera sensor grain).");
+        }
     }
 
-    // 2. INTERNET EVIDENCE
+    // 3. OSINT Check
     if (internet?.footprintAnalysis?.sources?.stockParams) {
         riskScore = 95;
         evidence.push("CRITICAL: Image found in Stock Photo Database.");
     }
 
-    // 3. FINAL VERDICT
     riskScore = Math.min(Math.round(riskScore), 100);
     
     let riskLevel = "VERIFIED";
     if (riskScore > 80) riskLevel = "CRITICAL";
     else if (riskScore > 50) riskLevel = "HIGH";
-    else if (riskScore > 30) riskLevel = "SUSPICIOUS";
+    else if (riskScore > 20) riskLevel = "SUSPICIOUS";
 
     return res.status(200).json({
-        service: "risk-engine-zero-tolerance",
+        service: "risk-engine-v8-math",
         riskScore: riskScore,
         riskLevel: riskLevel,
         executiveSummary: evidence.length > 0 ? evidence[0] : "Media appears consistent with organic capture.",
