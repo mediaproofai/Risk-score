@@ -76,17 +76,26 @@ export default async function handler(req, res) {
                 }
             }
 
-            // 2.3 AUDIO VOICE INTEGRITY
-            if (audio?.voice_integrity) {
-                if (audio.voice_integrity.cloning_probability > 0.6) {
-                    riskScore = Math.max(riskScore, 90);
-                    evidence.push("CRITICAL: Voice biometrics match known cloning patterns.");
-                }
-                if (audio.signal_analysis?.frequency_cutoff?.includes("Hard Limit")) {
-                    riskScore = Math.max(riskScore, 85);
-                    evidence.push("CRITICAL: Audio spectrum shows unnatural 16kHz cutoff (Typical of TTS).");
+           // ... inside the logic ...
+
+        // --- 2. AUDIO FORENSICS ---
+        if (audio && audio.voice_integrity) {
+            const integrity = audio.voice_integrity;
+            
+            // A. AI Model / Physics Verdict
+            if (integrity.cloning_probability > 0.5) {
+                let severity = integrity.cloning_probability * 100;
+                riskScore = Math.max(riskScore, severity);
+                
+                if (integrity.method === "ENCODER_FINGERPRINT") {
+                    evidence.push("CRITICAL: Audio encoded with software tools (FFmpeg/LAME) typical of AI generation.");
+                } else if (integrity.method === "SIGNAL_PHYSICS") {
+                    evidence.push("Suspicious signal properties (Digital Silence/Flat Dynamics).");
+                } else {
+                    evidence.push(`AI Voice Cloning signature detected (${Math.round(severity)}%).`);
                 }
             }
+        }
 
             // 2.4 OSINT (Timeline Analysis)
             if (internet?.footprintAnalysis) {
